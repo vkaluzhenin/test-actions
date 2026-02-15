@@ -1,0 +1,67 @@
+# Workflow: сборка Docker-образа, пуш в GHCR и деплой на сервер по SSH
+#
+# Необходимые секреты (Settings → Secrets and variables → Actions):
+#   SSH_HOST      - хост удалённого сервера
+#   SSH_USER      - пользователь SSH
+#   SSH_PRIVATE_KEY - приватный SSH-ключ (содержимое id_rsa)
+#   SSH_PORT      - порт SSH (опционально, по умолчанию 22)
+#   GHCR_TOKEN    - (опционально) PAT с read:packages для pull. Иначе используется GITHUB_TOKEN.
+
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          script: |
+            echo ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            docker stop fastapi-time 2>/dev/null || true
+            docker rm fastapi-time 2>/dev/null || true
+            docker run -d \
+              --name fastapi-time \
+              -p 8000:8000 \
+              --restart unless-stopped \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
