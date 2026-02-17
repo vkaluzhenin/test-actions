@@ -39,74 +39,21 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Debug environment
-        run: |
-          echo "=== Environment ==="
-          echo "HOME: $HOME"
-          echo "RUNNER_TEMP: $RUNNER_TEMP"
-          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
-          echo "=== Current directory ==="
-          pwd
-          ls -la
-      
-      - name: Setup SSH key with absolute path
-        run: |
-          # Создаем папку .ssh в домашней директории
-          mkdir -p $HOME/.ssh
-          
-          # Сохраняем ключ, удаляя возможные проблемы с переносами
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | sed 's/\r$//' > $HOME/.ssh/id_rsa
-          
-          # Устанавливаем правильные права
-          chmod 600 $HOME/.ssh/id_rsa
-          
-          # Добавляем хост в known_hosts
-          ssh-keyscan -p ${{ secrets.SSH_PORT || '22' }} ${{ secrets.SSH_HOST }} > $HOME/.ssh/known_hosts
-          
-          # Подробная информация о ключе
-          echo "=== SSH Key Info ==="
-          echo "Key path: $HOME/.ssh/id_rsa"
-          echo "Key permissions:"
-          ls -la $HOME/.ssh/
-          echo "Key file type:"
-          file $HOME/.ssh/id_rsa
-          echo "Key file size:"
-          wc -l $HOME/.ssh/id_rsa
-          echo "=== First 3 lines of key ==="
-          head -n 3 $HOME/.ssh/id_rsa
-          echo "=== Last 3 lines of key ==="
-          tail -n 3 $HOME/.ssh/id_rsa
-      
-      - name: Test SSH connection with full debug
-        run: |
-          echo "=== Testing SSH Connection ==="
-          ssh -vvv -i $HOME/.ssh/id_rsa \
-            -p ${{ secrets.SSH_PORT || '22' }} \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            "echo 'SSH connection successful from GitHub Actions'"
-      
       - name: Deploy to server
-        run: |
-          ssh -i $HOME/.ssh/id_rsa \
-            -p ${{ secrets.SSH_PORT || '22' }} \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            "
-            set -e
-            echo '=== Deploying to server ==='
-            echo '${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            echo 'Pulling image...'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          script_stop: true
+          script: |
+            echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/${{ github.repository }}:latest
-            echo 'Stopping old container...'
-            docker stop fastapi-time 2>/dev/null || true
-            docker rm fastapi-time 2>/dev/null || true
-            echo 'Starting new container...'
+            docker stop fastapi-time || true
+            docker rm fastapi-time || true
             docker run -d \
               --name fastapi-time \
               -p 8000:8000 \
               --restart unless-stopped \
               ghcr.io/${{ github.repository }}:latest
-            echo 'Deployment complete!'
-            docker ps | grep fastapi-time
-            "
