@@ -73,6 +73,11 @@ jobs:
           PORT=${SSH_PORT:-22}
           ssh -i $HOME/.ssh/id_rsa -p "$PORT" -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "
             set -e
+            export PATH=/usr/local/bin:/usr/bin:/bin:\$PATH
+            if ! command -v docker >/dev/null 2>&1; then
+              echo 'Docker not found. Install on server: curl -fsSL https://get.docker.com | sh'
+              exit 127
+            fi
             echo '=== Deploying to server ==='
             echo '${GHCR_TOKEN}' | docker login ghcr.io -u '${GHCR_ACTOR}' --password-stdin
             docker pull ${GHCR_IMAGE}
